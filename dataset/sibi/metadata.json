@@ -1,0 +1,16 @@
+{
+  "labels": [
+    "aku"
+  ],
+  "recordings": [
+    {
+      "id": "e7b62101-047f-4dc8-bd54-3a60b1ec22c3",
+      "label": "aku",
+      "signType": "sibi",
+      "videoFile": "e7b62101-047f-4dc8-bd54-3a60b1ec22c3.webm",
+      "landmarkFile": "e7b62101-047f-4dc8-bd54-3a60b1ec22c3_landmarks.json",
+      "frameCount": 64,
+      "createdAt": "2026-06-08T11:27:01.355Z"
+    }
+  ]
+}
