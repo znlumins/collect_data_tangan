@@ -95,7 +95,13 @@ const storage = multer.diskStorage({
     cb(null, `${id}${ext}`);
   }
 });
-const upload = multer({ storage });
+const upload = multer({
+  storage,
+  limits: {
+    fieldSize: 25 * 1024 * 1024, // 25MB — landmark JSON for 500 frames can exceed default 1MB busboy limit
+    fileSize: 50 * 1024 * 1024,  // 50MB video
+  },
+});
 
 // ==================== API ROUTES ====================
 

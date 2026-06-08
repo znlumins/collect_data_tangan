@@ -4,7 +4,7 @@ import LabelManager from './components/LabelManager';
 import WebCamRecorder from './components/WebCamRecorder';
 import DatasetList from './components/DatasetList';
 import { fetchStats, fetchLabels, exportDataset } from './utils/api';
-import { Hand, Download, Video, Database } from 'lucide-react';
+import { Download, Video, Database } from 'lucide-react';
 
 interface Stats {
   sibi: { labels: number; recordings: number };

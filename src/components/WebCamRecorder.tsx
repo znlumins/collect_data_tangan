@@ -14,12 +14,22 @@ interface WebCamRecorderProps {
   onToast: (msg: string, type?: 'success' | 'error') => void;
 }
 
+interface LandmarkPoint {
+  x: number;
+  y: number;
+  z: number;
+  visibility?: number;
+}
+
 interface LandmarkFrame {
   frame: number;
   timestamp: number;
-  leftHand: { x: number; y: number; z: number }[] | null;
-  rightHand: { x: number; y: number; z: number }[] | null;
-  pose: { x: number; y: number; z: number }[] | null;
+  leftHand: LandmarkPoint[] | null;
+  leftHandWorld: LandmarkPoint[] | null;
+  rightHand: LandmarkPoint[] | null;
+  rightHandWorld: LandmarkPoint[] | null;
+  pose: LandmarkPoint[] | null;
+  poseWorld: LandmarkPoint[] | null;
 }
 
 // Helper: wait for a global to become available
@@ -56,6 +66,7 @@ export default function WebCamRecorder({
   const countdownIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const lastFrameTimeRef = useRef<number>(0);
   const processingRef = useRef<boolean>(false);
+  const frameTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const mountedRef = useRef<boolean>(true);
   const onToastRef = useRef(onToast);
 
@@ -63,7 +74,6 @@ export default function WebCamRecorder({
   const [mpReady, setMpReady] = useState(false);
   const [mpLoading, setMpLoading] = useState(true);
   const [mpProgressLabel, setMpProgressLabel] = useState('Menginisialisasi...');
-  const [debugFrameCount, setDebugFrameCount] = useState(0);
   const [recording, setRecording] = useState(false);
   const [countdown, setCountdown] = useState<number | null>(null);
   const [frameCount, setFrameCount] = useState(0);
@@ -165,16 +175,14 @@ export default function WebCamRecorder({
         holistic.setOptions({
           modelComplexity: 1,
           smoothLandmarks: true,
+          enableSegmentation: false,
+          smoothSegmentation: false,
+          refineFaceLandmarks: false,
           minDetectionConfidence: 0.5,
           minTrackingConfidence: 0.5,
         });
 
         holistic.onResults((results: any) => {
-          console.log('[MediaPipe] onResults terpanggil! landmarks:', {
-            pose: results.poseLandmarks?.length || 0,
-            leftHand: results.leftHandLandmarks?.length || 0,
-            rightHand: results.rightHandLandmarks?.length || 0,
-          });
           if (!mountedRef.current) return;
           try {
             drawLandmarks(results);
@@ -188,8 +196,6 @@ export default function WebCamRecorder({
           } finally {
             processingRef.current = false;
           }
-          
-          setDebugFrameCount(prev => prev + 1);
 
           const hasLandmarks = !!(
             results.leftHandLandmarks?.length ||
@@ -198,21 +204,19 @@ export default function WebCamRecorder({
           );
           setLandmarkDetected(hasLandmarks);
 
-          if (recordingRef.current && frameCountRef.current < TARGET_FRAMES) {
+          // Collect landmarks during recording — decoupled from frame counter (timer-based)
+          if (recordingRef.current) {
             const frame: LandmarkFrame = {
               frame: frameCountRef.current,
               timestamp: Date.now(),
               leftHand: results.leftHandLandmarks || null,
+              leftHandWorld: results.leftHandWorldLandmarks || null,
               rightHand: results.rightHandLandmarks || null,
+              rightHandWorld: results.rightHandWorldLandmarks || null,
               pose: results.poseLandmarks || null,
+              poseWorld: results.poseWorldLandmarks || null,
             };
             landmarksRef.current.push(frame);
-            frameCountRef.current++;
-            setFrameCount(frameCountRef.current);
-
-            if (frameCountRef.current >= TARGET_FRAMES) {
-              stopRecording();
-            }
           }
         });
 
@@ -321,33 +325,20 @@ export default function WebCamRecorder({
       !processingRef.current &&
       now - lastFrameTimeRef.current >= FRAME_INTERVAL_MS
     ) {
-      console.log(`[MediaPipe] Mengirim frame ke AI... (Video: ${video.videoWidth}x${video.videoHeight}, readyState: ${video.readyState})`);
       processingRef.current = true;
       lastFrameTimeRef.current = now;
-      
       try {
         await holisticRef.current.send({ image: video });
-        console.log('[MediaPipe] Berhasil mengirim frame!');
       } catch (err) {
         console.error('[MediaPipe] Error saat mengirim frame:', err);
       } finally {
         processingRef.current = false;
       }
-    } else if (now - lastFrameTimeRef.current >= 1000) {
-      console.log(`[MediaPipe Debug] Loop jalan. Status -> cameraReady: ${cameraReady}, mpReady: ${mpReady}, processing: ${processingRef.current}`);
-      if (!video) console.log('[MediaPipe] Menunggu: video tidak ada');
-      else if (video.readyState < 2) console.log(`[MediaPipe] Menunggu: video readyState masih ${video.readyState}`);
-      else if (video.videoWidth === 0) console.log('[MediaPipe] Menunggu: videoWidth masih 0');
-      else if (!holisticRef.current) console.log('[MediaPipe] Menunggu: holistic belum siap');
-      else if (processingRef.current) console.log('[MediaPipe] Menunggu: frame sebelumnya belum selesai (NGE-HANG!)');
-      lastFrameTimeRef.current = now; 
     }
   }, [cameraReady, mpReady]);
 
   useEffect(() => {
-    console.log(`[MediaPipe Debug] useEffect trigger -> cameraReady: ${cameraReady}, mpReady: ${mpReady}, holisticRef: ${!!holisticRef.current}`);
     if (cameraReady && mpReady && holisticRef.current) {
-      console.log('[MediaPipe Debug] Memulai loop processFrame!');
       processFrame();
     }
     return () => {
@@ -361,6 +352,7 @@ export default function WebCamRecorder({
       mountedRef.current = false;
       if (animationRef.current) cancelAnimationFrame(animationRef.current);
       if (countdownIntervalRef.current) clearInterval(countdownIntervalRef.current);
+      if (frameTimerRef.current) clearInterval(frameTimerRef.current);
 
       if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
         mediaRecorderRef.current.onstop = null;
@@ -409,6 +401,10 @@ export default function WebCamRecorder({
       clearInterval(countdownIntervalRef.current);
       countdownIntervalRef.current = null;
     }
+    if (frameTimerRef.current) {
+      clearInterval(frameTimerRef.current);
+      frameTimerRef.current = null;
+    }
     setCountdown(null);
     setFrameCount(0);
     frameCountRef.current = 0;
@@ -445,9 +441,32 @@ export default function WebCamRecorder({
 
     recordingRef.current = true;
     setRecording(true);
+
+    // Timer-based frame counter — independent of MediaPipe speed.
+    // Counts video frames at FRAME_INTERVAL_MS (≈30fps) so recording always
+    // completes in TARGET_FRAMES × FRAME_INTERVAL_MS ≈ 16.5s regardless of how
+    // fast the MediaPipe model runs on the device.
+    frameTimerRef.current = setInterval(() => {
+      if (!mountedRef.current || !recordingRef.current) {
+        if (frameTimerRef.current) clearInterval(frameTimerRef.current);
+        frameTimerRef.current = null;
+        return;
+      }
+      frameCountRef.current++;
+      setFrameCount(frameCountRef.current);
+      if (frameCountRef.current >= TARGET_FRAMES) {
+        clearInterval(frameTimerRef.current!);
+        frameTimerRef.current = null;
+        stopRecording();
+      }
+    }, FRAME_INTERVAL_MS);
   };
 
   const stopRecording = () => {
+    if (frameTimerRef.current) {
+      clearInterval(frameTimerRef.current);
+      frameTimerRef.current = null;
+    }
     recordingRef.current = false;
     setRecording(false);
     if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
@@ -460,10 +479,10 @@ export default function WebCamRecorder({
     setSaving(true);
     try {
       const videoBlob = new Blob(chunksRef.current, { type: 'video/webm' });
-      
-      if (videoBlob.size === 0 || frameCountRef.current === 0) {
+
+      if (videoBlob.size === 0) {
         if (mountedRef.current) {
-          onToastRef.current('Perekaman gagal: Tidak ada frame yang terekam', 'error');
+          onToastRef.current('Perekaman gagal: Video kosong atau kamera terputus', 'error');
           setSaving(false);
         }
         return;
