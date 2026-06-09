@@ -10,11 +10,27 @@
 ## Status Saat Ini
 - [x] Next.js project sudah ada (tapi masih polosan)
 - [x] PRD sudah lengkap
-- [x] Dataset collection sudah mulai (collect_data_tangan)
+- [x] collect_data_tangan — **SIAP PAKAI PENUH** (lihat fitur di bawah)
+- [ ] Data rekaman — **PERLU RETAKE** (2 rekaman lama: 64 & 500 frame, tanpa quality metadata)
 - [ ] Database schema belum final
 - [ ] Golang backend belum ada
 - [ ] Deployment ke VPS kampus belum dilakukan
 - [ ] Model AI belum dilatih
+
+### Fitur collect_data_tangan yang Sudah Selesai (2026-06-09)
+| Fitur | Detail |
+|-------|--------|
+| Frame per tipe | SIBI = 100 frame, BISINDO = 300 frame |
+| Batch recording | Pilih 1×/3×/5×/10×/20×/30×/50× — rekam otomatis berulang |
+| Warmup detection | Countdown tunggu tangan terdeteksi, cegah rekaman kosong |
+| Quality score | `handDetectionRate` (0–1) + `quality` (good/fair/poor) per rekaman |
+| Signer tag | Kode perekam tersimpan di localStorage, ikut metadata |
+| Per-label progress | Progress bar + `count/target` di sidebar, target bisa diubah |
+| Spacebar shortcut | Tekan Space untuk rekam/stop/batal tanpa klik |
+| Auto-lanjut label | Setelah batch selesai otomatis pindah ke label berikutnya |
+| Quality filter | Filter DatasetList by good/fair/poor untuk identifikasi data buruk |
+| Pagination | 20 rekaman/halaman, cegah browser crash saat 500+ rekaman |
+| Download ZIP | Satu klik download seluruh dataset (video + JSON landmark) untuk Colab |
 
 ---
 
@@ -125,9 +141,47 @@ services:
 *Target: Model terlatih dan terintegrasi di Studio VERO*
 
 ### [ ] 3.1 Training Data (paralel dengan Phase 1–2)
+
+**Langkah pertama — Retake 2 rekaman lama:**
 ```
-collect_data_tangan → kumpulkan 800+ rekaman SIBI + 300+ BISINDO
-Lihat detail di PLAN_collect_data.md
+Buka collect_data_tangan → tab Dataset → hapus 2 rekaman "aku" yang ada
+(64 frame & 500 frame, tanpa quality metadata — tidak valid untuk training)
+Rekam ulang dengan setting baru: SIBI = 100 frame, signer tag diisi
+```
+
+**Target data minimum sebelum training:**
+| Tipe | Label | Sampel/label | Penanda tangan | Total |
+|------|-------|-------------|----------------|-------|
+| SIBI | 26 huruf (A–Z) | 30 | ≥ 3 orang | 780 |
+| BISINDO | 20 kata umum | 30 | ≥ 3 orang | 600 |
+
+**Standar kualitas rekaman yang masuk training:**
+- `quality = good` → `handDetectionRate ≥ 0.70` ✅ masuk training
+- `quality = fair` → `handDetectionRate 0.40–0.69` ⚠️ masuk jika kekurangan data
+- `quality = poor` → `handDetectionRate < 0.40` ❌ hapus, rekam ulang
+
+**Strategi signer untuk generalisasi model:**
+```
+Signer s001, s002 (anggota tim dengar) → 20 sampel/label
+Signer s003, s004 (teman tuli/tunawicara) → 10 sampel/label
+→ Total 30 sampel/label dari background berbeda
+→ Waktu training: split by signer (train s001+s002+s003, test s004)
+   ini ukur apakah model general ke orang yang belum pernah dilihat model
+```
+
+**Kenapa libatkan tunarungu/tunawicara:**
+Gestur SIBI/BISINDO yang dipelajari orang dengar sering berbeda tempo,
+artikulasi, dan variasi dibanding pengguna asli. Model yang hanya belajar
+dari orang dengar bisa tidak akurat untuk pengguna target VERO.
+
+**Workflow koleksi data (2 laptop):**
+```
+Laptop 1 (kamu): signer tag = s001
+Laptop 2 (teman): signer tag = s002
+→ Masing-masing rekam 15 sampel/label × 26 huruf = 390 rekaman
+→ Gabung: copy folder dataset/ dari laptop 2 ke laptop 1
+  (atau pakai VPS kampus sebagai storage bersama)
+→ Klik "Download ZIP" → upload ke Google Drive → buka di Colab
 ```
 
 ### [ ] 3.2 Training Script (Google Colab / VPS Kampus)
@@ -194,23 +248,44 @@ def extract_features(landmark_frames, target_frames=100):
     return features  # shape: (target_frames, 258)
 ```
 
-**Load Dataset:**
+**Load Dataset dengan Quality Filter:**
 ```python
 import os
 
-def load_dataset(dataset_path, sign_type='sibi', target_frames=100):
-    X, y, labels = [], [], []
+def load_dataset(dataset_path, sign_type='sibi', target_frames=100,
+                 min_quality='good', exclude_signers=None):
+    """
+    min_quality: 'good' (hdr≥0.7) | 'fair' (hdr≥0.4) | 'all'
+    exclude_signers: list signer tag untuk test set, misal ['s004']
+    """
+    X, y, signers = [], [], []
+    
+    quality_threshold = {'good': 0.7, 'fair': 0.4, 'all': 0.0}
+    min_hdr = quality_threshold.get(min_quality, 0.7)
     
     meta_path = os.path.join(dataset_path, sign_type, 'metadata.json')
     with open(meta_path) as f:
         meta = json.load(f)
     
     label_to_idx = {label: i for i, label in enumerate(sorted(meta['labels']))}
+    skipped = 0
     
     for rec in meta['recordings']:
+        # Filter by quality
+        hdr = rec.get('handDetectionRate', 1.0)  # rekaman lama anggap OK
+        if hdr < min_hdr:
+            skipped += 1
+            continue
+        
+        # Filter by signer (untuk pisah train/test)
+        signer = rec.get('signerTag', '')
+        if exclude_signers and signer in exclude_signers:
+            continue
+        
         lm_path = os.path.join(dataset_path, sign_type, rec['label'],
-                               rec['landmarkFile'])
-        if not os.path.exists(lm_path):
+                               rec.get('landmarkFile', ''))
+        if not lm_path or not os.path.exists(lm_path):
+            skipped += 1
             continue
             
         with open(lm_path) as f:
@@ -219,9 +294,30 @@ def load_dataset(dataset_path, sign_type='sibi', target_frames=100):
         features = extract_features(frames, target_frames)
         X.append(features)
         y.append(label_to_idx[rec['label']])
-        labels.append(rec['label'])
+        signers.append(signer)
     
-    return np.array(X), np.array(y), label_to_idx
+    print(f"Loaded: {len(X)} recordings, skipped: {skipped}")
+    return np.array(X), np.array(y), label_to_idx, signers
+
+# --- Contoh penggunaan ---
+
+# Load semua data (train set) — kecuali signer s004 untuk test
+X_train, y_train, label_map, _ = load_dataset(
+    '/content/dataset', 'sibi',
+    min_quality='good',
+    exclude_signers=['s004']
+)
+
+# Load test set — hanya signer s004 (unseen signer test)
+X_test_signer, y_test_signer, _, _ = load_dataset(
+    '/content/dataset', 'sibi',
+    min_quality='all',
+    exclude_signers=None
+)
+X_test_signer = X_test_signer[[s == 's004' for s in _]]  # filter post-load
+
+print("Train shape:", X_train.shape)   # (n, 100, 258)
+print("Label map:", label_map)
 ```
 
 **Model LSTM:**
@@ -347,6 +443,71 @@ holistic.onResults((results) => {
     }
   }
 });
+```
+
+---
+
+## Pipeline Lengkap: collect_data → Training → VERO
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│  STEP 1: Koleksi Data (collect_data_tangan)                  │
+│                                                              │
+│  • Isi signer tag (s001, s002, dst)                         │
+│  • SIBI: pilih label → batch 10× → Space untuk rekam        │
+│  • Cek quality badge — hapus rekaman "Buruk" (merah)        │
+│  • Klik Download ZIP → simpan ke Google Drive               │
+└──────────────────────────────┬──────────────────────────────┘
+                               │ dataset-YYYY-MM-DD.zip
+                               ▼
+┌─────────────────────────────────────────────────────────────┐
+│  STEP 2: Training (Google Colab)                             │
+│                                                              │
+│  • Upload ZIP ke Google Drive                               │
+│  • !unzip dataset.zip -d /content/                          │
+│  • load_dataset(min_quality='good', exclude_signers=['s004'])│
+│  • Train LSTM → target val_accuracy > 0.80                  │
+│  • Export: model.json + weights.bin + labels.json           │
+└──────────────────────────────┬──────────────────────────────┘
+                               │ model files
+                               ▼
+┌─────────────────────────────────────────────────────────────┐
+│  STEP 3: Integrasi ke VERO                                   │
+│                                                              │
+│  • Copy ke /public/models/sibi/ dan /public/models/bisindo/ │
+│  • Ganti MediaPipe Hands → Holistic di Studio               │
+│  • extractFeatures(): pose(132) + leftHand(63) + right(63)  │
+│  • Buffer 100 frame → tf.tensor3d → model.predict()         │
+│  • confidence > 0.7 → tampilkan subtitle                    │
+└──────────────────────────────┬──────────────────────────────┘
+                               │ gesture label
+                               ▼
+┌─────────────────────────────────────────────────────────────┐
+│  STEP 4 (bonus demo): IoT                                    │
+│                                                              │
+│  • Hasil prediksi → POST /api/iot/gesture ke Golang         │
+│  • Golang broadcast via WebSocket                           │
+│  • ESP32-S3 terima → output audio via MAX98357A             │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### Checklist Sebelum Training
+```
+[ ] Minimal 780 rekaman SIBI (26 × 30 sampel)
+[ ] Minimal 3 signer berbeda (wajib 1 dari tuli/tunawicara)
+[ ] Semua rekaman quality = good (handDetectionRate ≥ 0.70)
+[ ] Hapus rekaman poor dari DatasetList (filter → Buruk → hapus semua)
+[ ] Download ZIP dan upload ke Google Drive
+[ ] Cek distribusi label (tiap label minimal 25 rekaman)
+```
+
+### Checklist Setelah Training
+```
+[ ] val_accuracy > 0.80 di random split
+[ ] Test dengan unseen signer (s004) → accuracy > 0.65
+[ ] model.json + weights.bin + labels.json tersimpan di Drive
+[ ] Copy ke vero/public/models/sibi/
+[ ] Test manual di browser: tunjuk gestur → muncul label benar
 ```
 
 ---
@@ -500,13 +661,27 @@ server {
 ## Timeline Ringkas
 
 ```
-Minggu 1–2   Fondasi: Auth + DB + Deploy ke VPS kampus
-Minggu 2–3   Akademik: Kelas + Absensi + Jadwal  
-Minggu 3–5   AI: Kumpul data + Training + Integrasi Studio
-Minggu 5–6   Meeting: VeroMeeting + Gesture overlay
-Minggu 6–7   IoT: Golang + ESP32 + End-to-end test
-Minggu 7–8   Polish + Bug fix + Latihan demo PIMNAS
+SEKARANG     ★ Retake 2 rekaman "aku" yang lama (hapus → rekam ulang 100 frame)
+             ★ Mulai koleksi data serius: kamu + teman (2 laptop, signer berbeda)
+             ★ Libatkan teman tuli/tunawicara sesegera mungkin (minimal 1 orang)
+
+Minggu 1–2   Fondasi VERO: Auth + DB schema + Deploy ke VPS kampus
+             (paralel: terus kumpul data, target 400+ rekaman dulu)
+
+Minggu 2–3   Akademik: Kelas + Absensi + Jadwal
+             (paralel: lengkapi data ke 780 rekaman SIBI)
+
+Minggu 3–4   ★ Training di Google Colab (GPU gratis)
+             Integrasi model ke VERO Studio (handLogic.ts + MediaPipe Holistic)
+
+Minggu 4–5   Meeting: VeroMeeting + Gesture overlay subtitle
+Minggu 5–6   IoT: Golang backend + ESP32 + end-to-end test
+Minggu 6–7   Polish + bug fix + latihan narasi demo PIMNAS
+Minggu 7–8   Dry run full demo + cadangan fix
 ```
+
+> **Bottleneck utama:** Data. Tanpa 780 rekaman berkualitas, model tidak bisa dilatih.
+> Prioritas nomor 1 minggu ini adalah kumpulkan data, bukan coding VERO.
 
 ---
 
