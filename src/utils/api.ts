@@ -109,3 +109,15 @@ export async function exportDataset() {
   const res = await fetch(`${BASE}/api/export`);
   return res.json();
 }
+
+export async function downloadZip() {
+  const res = await fetch(`${BASE}/api/export/zip`);
+  if (!res.ok) throw new Error('ZIP export failed');
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `dataset-${new Date().toISOString().slice(0, 10)}.zip`;
+  a.click();
+  URL.revokeObjectURL(url);
+}

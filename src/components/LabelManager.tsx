@@ -12,6 +12,21 @@ interface LabelManagerProps {
   onRefresh: () => void;
 }
 
+function LabelProgress({ count, target }: { count: number; target: number }) {
+  const pct = Math.min((count / target) * 100, 100);
+  const barColor = pct >= 100 ? 'var(--green, #30a46c)' : pct >= 50 ? 'var(--accent, #4f6ef7)' : pct > 0 ? 'var(--orange, #e5a33a)' : 'transparent';
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '2px' }}>
+      <div style={{ width: '56px', height: '4px', background: 'var(--border-color, #e2e8f0)', borderRadius: '2px', overflow: 'hidden' }}>
+        <div style={{ width: `${pct}%`, height: '100%', background: barColor, borderRadius: '2px', transition: 'width 0.3s ease' }} />
+      </div>
+      <span style={{ fontSize: '0.72rem', fontVariantNumeric: 'tabular-nums', color: pct >= 100 ? 'var(--green, #30a46c)' : 'var(--text-muted)' }}>
+        {count}/{target}
+      </span>
+    </div>
+  );
+}
+
 export default function LabelManager({
   signType,
   onSignTypeChange,
@@ -26,6 +41,7 @@ export default function LabelManager({
   const [editingLabel, setEditingLabel] = useState<string | null>(null);
   const [editValue, setEditValue] = useState('');
   const [counts, setCounts] = useState<Record<string, number>>({});
+  const [target, setTarget] = useState(() => Number(localStorage.getItem('labelTarget') || 30));
   const renameDoneRef = useRef(false); // BUG-10 FIX: prevent double-submit
 
   const loadLabels = useCallback(async () => {
@@ -125,8 +141,34 @@ export default function LabelManager({
       </div>
 
       <div className="sidebar-section" style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
-        <div className="sidebar-title" style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-          <Tag size={12} /> Label Kata ({labels.length})
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0' }}>
+          <div className="sidebar-title" style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: 0 }}>
+            <Tag size={12} /> Label Kata ({labels.length})
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '0.78rem', color: 'var(--text-muted)' }}>
+            <span>Target:</span>
+            <input
+              type="number"
+              min={1}
+              max={999}
+              value={target}
+              onChange={e => {
+                const v = Math.max(1, Number(e.target.value) || 1);
+                setTarget(v);
+                localStorage.setItem('labelTarget', String(v));
+              }}
+              style={{
+                width: '46px',
+                padding: '2px 4px',
+                fontSize: '0.78rem',
+                border: '1px solid var(--border-color)',
+                borderRadius: '4px',
+                background: 'var(--bg-input, #fff)',
+                color: 'var(--text)',
+                textAlign: 'center',
+              }}
+            />
+          </div>
         </div>
 
         <div className="add-label-row" style={{ marginBottom: '16px', marginTop: '4px' }}>
@@ -148,7 +190,7 @@ export default function LabelManager({
             onClick={() => onSelectLabel(null)}
           >
             <span>Semua</span>
-            <span className="label-count">{Object.values(counts).reduce((a, b) => a + b, 0)}</span>
+            <span className="label-count">{Object.values(counts).reduce((a, b) => a + b, 0)} rekaman</span>
           </div>
 
           {labels.map(label => (
@@ -170,9 +212,9 @@ export default function LabelManager({
                 />
               ) : (
                 <>
-                  <span>{label}</span>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                    <span className="label-count">{counts[label] || 0}</span>
+                  <span style={{ flexShrink: 0, maxWidth: '90px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{label}</span>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexShrink: 0 }}>
+                    <LabelProgress count={counts[label] || 0} target={target} />
                     <div className="label-actions">
                       <button
                         className="btn-icon"

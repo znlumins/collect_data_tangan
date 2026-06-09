@@ -5,6 +5,7 @@ import fs from 'fs';
 import path from 'path';
 import { v4 as uuidv4 } from 'uuid';
 import { fileURLToPath } from 'url';
+import archiver from 'archiver';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -361,6 +362,19 @@ app.delete('/api/:signType/recordings/:id', validateSignType, (req, res) => {
   meta.recordings.splice(recIdx, 1);
   writeMetadata(signType, meta);
   res.json({ success: true });
+});
+
+// --- GET: Export dataset as ZIP (video + landmark files) ---
+app.get('/api/export/zip', (_req, res) => {
+  const filename = `dataset-${new Date().toISOString().slice(0, 10)}.zip`;
+  res.setHeader('Content-Type', 'application/zip');
+  res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+
+  const archive = archiver('zip', { zlib: { level: 6 } });
+  archive.on('error', err => { console.error('ZIP error:', err); res.destroy(); });
+  archive.pipe(res);
+  archive.directory(DATASET_DIR, 'dataset');
+  archive.finalize();
 });
 
 // --- GET: Export metadata as JSON ---

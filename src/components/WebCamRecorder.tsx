@@ -14,6 +14,7 @@ interface WebCamRecorderProps {
   labels: string[];
   signerTag: string;
   onRecorded: () => void;
+  onAutoAdvance: () => void;
   onToast: (msg: string, type?: 'success' | 'error') => void;
 }
 
@@ -57,6 +58,7 @@ export default function WebCamRecorder({
   labels,
   signerTag,
   onRecorded,
+  onAutoAdvance,
   onToast,
 }: WebCamRecorderProps) {
   // --- Refs ---
@@ -98,6 +100,7 @@ export default function WebCamRecorder({
   const [batchTarget, setBatchTarget] = useState(1);
   const [batchDone, setBatchDone] = useState(0);
   const [waitingForHand, setWaitingForHand] = useState(false);
+  const [autoAdvance, setAutoAdvance] = useState(() => localStorage.getItem('autoAdvance') === 'true');
 
   const targetFrames = TARGET_FRAMES_MAP[signType] ?? 100;
 
@@ -348,6 +351,25 @@ export default function WebCamRecorder({
     };
   }, []);
 
+  // --- Spacebar shortcut ---
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.code !== 'Space') return;
+      const tag = (e.target as HTMLElement).tagName;
+      if (tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA') return;
+      e.preventDefault();
+      if (recordingRef.current) {
+        stopRecording();
+      } else if (countdownIntervalRef.current !== null || waitingForHandRef.current) {
+        cancelCountdown();
+      } else if (cameraReady && currentLabel) {
+        startCountdownAndRecord();
+      }
+    };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [cameraReady, currentLabel]);
+
   // --- Recording Logic ---
 
   const doStartCountdown = () => {
@@ -522,6 +544,7 @@ export default function WebCamRecorder({
         setBatchDone(0);
         batchDoneRef.current = 0;
         onRecorded();
+        if (autoAdvance) setTimeout(() => { if (mountedRef.current) onAutoAdvance(); }, 500);
       }
     } catch {
       if (mountedRef.current) onToastRef.current('Gagal menyimpan rekaman', 'error');
@@ -628,6 +651,20 @@ export default function WebCamRecorder({
             </select>
           </div>
 
+          {/* Auto-advance toggle */}
+          <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.8rem', color: 'var(--text-muted)', cursor: 'pointer', userSelect: 'none' }}>
+            <input
+              type="checkbox"
+              checked={autoAdvance}
+              onChange={e => {
+                setAutoAdvance(e.target.checked);
+                localStorage.setItem('autoAdvance', String(e.target.checked));
+              }}
+              style={{ cursor: 'pointer' }}
+            />
+            Auto lanjut label
+          </label>
+
           {/* MediaPipe status */}
           <div style={{
             fontSize: '0.9rem',
@@ -690,6 +727,7 @@ export default function WebCamRecorder({
                   <Circle size={16} fill="white" style={{ color: 'white' }} />
                   <span>
                     Rekam{batchTarget > 1 ? ` ${batchTarget}×` : ''} ({targetFrames} frame)
+                    <span style={{ fontSize: '0.75em', opacity: 0.7, marginLeft: '6px' }}>[Space]</span>
                   </span>
                 </>
               )}

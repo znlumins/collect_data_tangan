@@ -3,8 +3,8 @@ import './App.css';
 import LabelManager from './components/LabelManager';
 import WebCamRecorder from './components/WebCamRecorder';
 import DatasetList from './components/DatasetList';
-import { fetchStats, fetchLabels, exportDataset } from './utils/api';
-import { Download, Video, Database, User } from 'lucide-react';
+import { fetchStats, fetchLabels, exportDataset, downloadZip } from './utils/api';
+import { Download, Video, Database, User, Archive } from 'lucide-react';
 
 interface Stats {
   sibi: { labels: number; recordings: number };
@@ -53,6 +53,27 @@ function App() {
     setSignerTag(val);
     localStorage.setItem('signerTag', val);
   };
+
+  const handleDownloadZip = async () => {
+    showToast('Menyiapkan ZIP...', 'success');
+    try {
+      await downloadZip();
+      showToast('ZIP berhasil diunduh', 'success');
+    } catch {
+      showToast('Gagal mengunduh ZIP', 'error');
+    }
+  };
+
+  const handleAutoAdvance = useCallback(() => {
+    if (!selectedLabel || labels.length === 0) return;
+    const idx = labels.indexOf(selectedLabel);
+    if (idx < labels.length - 1) {
+      setSelectedLabel(labels[idx + 1]);
+      showToast(`Auto-lanjut → "${labels[idx + 1]}"`, 'success');
+    } else {
+      showToast('Semua label sudah selesai!', 'success');
+    }
+  }, [selectedLabel, labels]);
 
   const handleExport = async () => {
     try {
@@ -108,8 +129,11 @@ function App() {
               }}
             />
           </div>
-          <button className="btn btn-sm" onClick={handleExport} title="Ekspor metadata (label & path video) sebagai JSON" style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-            <Download size={14} /> Ekspor Metadata
+          <button className="btn btn-sm" onClick={handleExport} title="Ekspor metadata sebagai JSON" style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+            <Download size={14} /> Ekspor JSON
+          </button>
+          <button className="btn btn-sm" onClick={handleDownloadZip} title="Download seluruh dataset sebagai ZIP (untuk Colab)" style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+            <Archive size={14} /> Download ZIP
           </button>
         </div>
       </header>
@@ -168,6 +192,7 @@ function App() {
               labels={labels}
               signerTag={signerTag}
               onRecorded={refresh}
+              onAutoAdvance={handleAutoAdvance}
               onToast={showToast}
             />
           ) : (
