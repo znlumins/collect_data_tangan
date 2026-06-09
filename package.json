@@ -12,7 +12,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "archiver": "^8.0.0",
+    "archiver": "^6.0.2",
     "cors": "^2.8.6",
     "express": "^5.2.1",
     "lucide-react": "^1.17.0",

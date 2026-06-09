@@ -5,7 +5,9 @@ import fs from 'fs';
 import path from 'path';
 import { v4 as uuidv4 } from 'uuid';
 import { fileURLToPath } from 'url';
-import archiver from 'archiver';
+import { createRequire } from 'module';
+const require = createRequire(import.meta.url);
+const archiver = require('archiver');
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
