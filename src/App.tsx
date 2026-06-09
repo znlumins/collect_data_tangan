@@ -4,7 +4,7 @@ import LabelManager from './components/LabelManager';
 import WebCamRecorder from './components/WebCamRecorder';
 import DatasetList from './components/DatasetList';
 import { fetchStats, fetchLabels, exportDataset } from './utils/api';
-import { Download, Video, Database } from 'lucide-react';
+import { Download, Video, Database, User } from 'lucide-react';
 
 interface Stats {
   sibi: { labels: number; recordings: number };
@@ -22,6 +22,7 @@ function App() {
   const [labels, setLabels] = useState<string[]>([]);
   const [refreshTrigger, setRefreshTrigger] = useState(0);
   const [toasts, setToasts] = useState<{ id: number; msg: string; type: string }[]>([]);
+  const [signerTag, setSignerTag] = useState(() => localStorage.getItem('signerTag') || '');
 
   const refresh = () => setRefreshTrigger(prev => prev + 1);
 
@@ -46,6 +47,11 @@ function App() {
     setTimeout(() => {
       setToasts(prev => prev.filter(t => t.id !== id));
     }, 3000);
+  };
+
+  const handleSignerTagChange = (val: string) => {
+    setSignerTag(val);
+    localStorage.setItem('signerTag', val);
   };
 
   const handleExport = async () => {
@@ -84,6 +90,24 @@ function App() {
               </div>
             </>
           )}
+          <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+            <User size={14} style={{ color: 'var(--text-muted)', flexShrink: 0 }} />
+            <input
+              type="text"
+              placeholder="Kode perekam (mis: s001)"
+              value={signerTag}
+              onChange={e => handleSignerTagChange(e.target.value)}
+              style={{
+                fontSize: '0.8rem',
+                padding: '4px 8px',
+                border: '1px solid var(--border)',
+                borderRadius: '6px',
+                background: 'var(--bg-input, #fff)',
+                color: 'var(--text)',
+                width: '160px',
+              }}
+            />
+          </div>
           <button className="btn btn-sm" onClick={handleExport} title="Ekspor metadata (label & path video) sebagai JSON" style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
             <Download size={14} /> Ekspor Metadata
           </button>
@@ -142,6 +166,7 @@ function App() {
               signType={signType}
               selectedLabel={selectedLabel}
               labels={labels}
+              signerTag={signerTag}
               onRecorded={refresh}
               onToast={showToast}
             />

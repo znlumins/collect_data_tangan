@@ -211,7 +211,7 @@ app.get('/api/:signType/recordings', validateSignType, (req, res) => {
 // BUG-2 FIX: Check req.file is not null
 app.post('/api/:signType/recordings', validateSignType, upload.single('video'), (req, res) => {
   const { signType } = req.params;
-  const { label, landmarks, frameCount } = req.body;
+  const { label, landmarks, frameCount, signerTag, handDetectionRate } = req.body;
 
   if (!label) {
     // Clean up temp file if label is missing
@@ -253,6 +253,9 @@ app.post('/api/:signType/recordings', validateSignType, upload.single('video'), 
     fs.writeFileSync(landmarkPath, landmarks);
   }
 
+  const parsedHandDetectionRate = parseFloat(handDetectionRate) || 0;
+  const quality = parsedHandDetectionRate >= 0.7 ? 'good' : parsedHandDetectionRate >= 0.4 ? 'fair' : 'poor';
+
   const recording = {
     id,
     label: normalizedLabel,
@@ -260,6 +263,9 @@ app.post('/api/:signType/recordings', validateSignType, upload.single('video'), 
     videoFile: videoFile.filename,
     landmarkFile: landmarks ? `${id}_landmarks.json` : null,
     frameCount: parseInt(frameCount) || 0,
+    signerTag: (signerTag || '').trim(),
+    handDetectionRate: parsedHandDetectionRate,
+    quality,
     createdAt: new Date().toISOString(),
   };
 

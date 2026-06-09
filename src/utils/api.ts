@@ -39,6 +39,9 @@ export interface Recording {
   videoFile: string;
   landmarkFile: string | null;
   frameCount: number;
+  signerTag: string;
+  handDetectionRate: number;
+  quality: 'good' | 'fair' | 'poor';
   createdAt: string;
 }
 
@@ -55,7 +58,9 @@ export async function saveRecording(
   label: string,
   videoBlob: Blob,
   landmarks: object[],
-  frameCount: number
+  frameCount: number,
+  signerTag: string = '',
+  handDetectionRate: number = 0,
 ) {
   const formData = new FormData();
   formData.append('video', videoBlob, `recording.webm`);
@@ -63,6 +68,8 @@ export async function saveRecording(
   formData.append('landmarks', JSON.stringify(landmarks));
   formData.append('frameCount', String(frameCount));
   formData.append('signType', signType);
+  formData.append('signerTag', signerTag);
+  formData.append('handDetectionRate', String(handDetectionRate));
 
   const res = await fetch(`${BASE}/api/${signType}/recordings`, {
     method: 'POST',
