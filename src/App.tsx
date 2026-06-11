@@ -221,6 +221,7 @@ function App() {
             onToast={showToast}
             refreshTrigger={refreshTrigger}
             onRefresh={refresh}
+            signerTag={signerTag}
           />
         </aside>
 

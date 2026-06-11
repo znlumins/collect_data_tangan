@@ -10,6 +10,7 @@ interface LabelManagerProps {
   onToast: (msg: string, type?: 'success' | 'error') => void;
   refreshTrigger: number;
   onRefresh: () => void;
+  signerTag: string;
 }
 
 interface LabelQuality {
@@ -51,6 +52,7 @@ export default function LabelManager({
   onToast,
   refreshTrigger,
   onRefresh,
+  signerTag,
 }: LabelManagerProps) {
   const [labels, setLabels] = useState<string[]>([]);
   const [newLabel, setNewLabel] = useState('');
@@ -67,7 +69,9 @@ export default function LabelManager({
   const loadLabels = useCallback(async () => {
     const data = await fetchLabels(signType);
     setLabels(data);
-    const recs: Recording[] = await fetchRecordings(signType);
+    const allRecs: Recording[] = await fetchRecordings(signType);
+    // Filter by signer: kalau signer dipilih, tampilkan progress milik signer itu saja
+    const recs = signerTag ? allRecs.filter(r => r.signerTag === signerTag) : allRecs;
     const qMap: Record<string, LabelQuality> = {};
     recs.forEach(r => {
       if (!qMap[r.label]) qMap[r.label] = { total: 0, good: 0, fair: 0, poor: 0 };
@@ -78,7 +82,7 @@ export default function LabelManager({
       else qMap[r.label].poor++;
     });
     setQuality(qMap);
-  }, [signType]);
+  }, [signType, signerTag]);
 
   useEffect(() => {
     loadLabels();
@@ -212,7 +216,14 @@ export default function LabelManager({
           className={`label-item ${selectedLabel === null ? 'active' : ''}`}
           onClick={() => onSelectLabel(null)}
         >
-          <span>Semua Rekaman</span>
+          <span style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
+            Semua Rekaman
+            {signerTag && (
+              <span style={{ fontSize: '0.65rem', color: 'var(--accent)', fontWeight: 600, background: 'var(--accent-subtle)', padding: '0px 5px', borderRadius: '8px' }}>
+                {signerTag}
+              </span>
+            )}
+          </span>
           <span className="label-count">{totalRecordings}</span>
         </div>
       </div>
@@ -239,6 +250,11 @@ export default function LabelManager({
           <div className="sidebar-title" style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: 0 }}>
             <Hash size={12} /> Huruf ({hurufLabels.length}/26)
           </div>
+          {signerTag && (
+            <span style={{ fontSize: '0.68rem', color: 'var(--accent)', fontWeight: 600, background: 'var(--accent-subtle)', padding: '1px 6px', borderRadius: '10px' }}>
+              {signerTag}
+            </span>
+          )}
           {hurufLabels.length < 26 && (
             <button
               className="btn btn-sm"
@@ -265,12 +281,13 @@ export default function LabelManager({
               const tooltipParts = q
                 ? [`Baik: ${q.good}`, q.fair > 0 ? `Cukup: ${q.fair}` : '', q.poor > 0 ? `Buruk: ${q.poor}` : ''].filter(Boolean).join(' · ')
                 : 'Belum ada rekaman';
+              const signerNote = signerTag ? ` [${signerTag}]` : '';
               return (
                 <button
                   key={label}
                   onClick={() => onSelectLabel(label)}
                   style={hurufTileStyle(label, isSelected)}
-                  title={`${label.toUpperCase()} — ${tooltipParts} (target: ${target})`}
+                  title={`${label.toUpperCase()}${signerNote} — ${tooltipParts} (target: ${target})`}
                 >
                   {complete && !isSelected && (
                     <CheckCircle2 size={8} style={{ position: 'absolute', top: 3, right: 3, color: 'var(--green, #2b8a3e)' }} />
