@@ -503,7 +503,7 @@ export default function WebCamRecorder({
       const saveLabel = activeRecordLabelRef.current;
       const capturedFrameCount = frameCountRef.current;
       const handDetectionRate = capturedFrameCount > 0
-        ? Math.round((handFramesRef.current / capturedFrameCount) * 100) / 100
+        ? Math.min(Math.round((handFramesRef.current / capturedFrameCount) * 100) / 100, 1.0)
         : 0;
 
       await saveRecording(

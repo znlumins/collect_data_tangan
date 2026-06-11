@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { fetchLabels, addLabel, renameLabel, deleteLabel, fetchRecordings, type Recording } from '../utils/api';
-import { Edit2, Trash2, Plus, Tag, Hash } from 'lucide-react';
+import { Edit2, Trash2, Plus, Tag, Hash, CheckCircle2 } from 'lucide-react';
 
 interface LabelManagerProps {
   signType: string;
@@ -12,16 +12,32 @@ interface LabelManagerProps {
   onRefresh: () => void;
 }
 
-function LabelProgress({ count, target }: { count: number; target: number }) {
-  const pct = Math.min((count / target) * 100, 100);
-  const barColor = pct >= 100 ? 'var(--green, #30a46c)' : pct >= 50 ? 'var(--accent, #4f6ef7)' : pct > 0 ? 'var(--orange, #e5a33a)' : 'transparent';
+interface LabelQuality {
+  total: number;
+  good: number;
+  fair: number;
+  poor: number;
+}
+
+// Multi-segment quality progress bar for kata labels
+function QualityProgress({ q, target }: { q: LabelQuality; target: number }) {
+  const complete = q.good >= target;
+  const goodPct  = Math.min((q.good / target) * 100, 100);
+  const fairPct  = Math.min(((q.good + q.fair) / target) * 100, 100) - goodPct;
+  const poorPct  = Math.min((q.total / target) * 100, 100) - goodPct - fairPct;
+  const extra    = q.fair + q.poor; // fair+poor shown as "+N"
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '2px' }}>
-      <div style={{ width: '56px', height: '4px', background: 'var(--border-color, #e2e8f0)', borderRadius: '2px', overflow: 'hidden' }}>
-        <div style={{ width: `${pct}%`, height: '100%', background: barColor, borderRadius: '2px', transition: 'width 0.3s ease' }} />
+      <div style={{ width: '56px', height: '4px', background: 'var(--border-color, #e2e8f0)', borderRadius: '2px', overflow: 'hidden', display: 'flex' }}>
+        <div style={{ width: `${goodPct}%`, height: '100%', background: complete ? 'var(--green, #2b8a3e)' : 'var(--accent, #3b5bdb)', transition: 'width 0.3s' }} />
+        <div style={{ width: `${fairPct}%`, height: '100%', background: 'var(--orange, #e67700)' }} />
+        <div style={{ width: `${poorPct}%`, height: '100%', background: 'var(--red, #fa5252)' }} />
       </div>
-      <span style={{ fontSize: '0.72rem', fontVariantNumeric: 'tabular-nums', color: pct >= 100 ? 'var(--green, #30a46c)' : 'var(--text-muted)' }}>
-        {count}/{target}
+      <span style={{ fontSize: '0.72rem', fontVariantNumeric: 'tabular-nums', color: complete ? 'var(--green, #2b8a3e)' : 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: '2px' }}>
+        {complete && <CheckCircle2 size={9} style={{ color: 'var(--green, #2b8a3e)', flexShrink: 0 }} />}
+        {q.good}/{target}
+        {extra > 0 && <span style={{ color: 'var(--text-muted)', fontSize: '0.65rem' }}>+{extra}</span>}
       </span>
     </div>
   );
@@ -40,23 +56,28 @@ export default function LabelManager({
   const [newLabel, setNewLabel] = useState('');
   const [editingLabel, setEditingLabel] = useState<string | null>(null);
   const [editValue, setEditValue] = useState('');
-  const [counts, setCounts] = useState<Record<string, number>>({});
+  const [quality, setQuality] = useState<Record<string, LabelQuality>>({});
   const [target, setTarget] = useState(() => Number(localStorage.getItem('labelTarget') || 30));
   const renameDoneRef = useRef(false);
 
   const hurufLabels = labels.filter(l => /^[a-z]$/.test(l)).sort();
   const kataLabels = labels.filter(l => !/^[a-z]$/.test(l));
-  const totalRecordings = Object.values(counts).reduce((a, b) => a + b, 0);
+  const totalRecordings = Object.values(quality).reduce((a, b) => a + b.total, 0);
 
   const loadLabels = useCallback(async () => {
     const data = await fetchLabels(signType);
     setLabels(data);
     const recs: Recording[] = await fetchRecordings(signType);
-    const countMap: Record<string, number> = {};
+    const qMap: Record<string, LabelQuality> = {};
     recs.forEach(r => {
-      countMap[r.label] = (countMap[r.label] || 0) + 1;
+      if (!qMap[r.label]) qMap[r.label] = { total: 0, good: 0, fair: 0, poor: 0 };
+      qMap[r.label].total++;
+      const q = r.quality || (r.handDetectionRate >= 0.7 ? 'good' : r.handDetectionRate >= 0.4 ? 'fair' : 'poor');
+      if (q === 'good') qMap[r.label].good++;
+      else if (q === 'fair') qMap[r.label].fair++;
+      else qMap[r.label].poor++;
     });
-    setCounts(countMap);
+    setQuality(qMap);
   }, [signType]);
 
   useEffect(() => {
@@ -130,30 +151,27 @@ export default function LabelManager({
     if (e.key === 'Escape') { renameDoneRef.current = true; setEditingLabel(null); }
   };
 
-  // Tile color for huruf based on progress
   function hurufTileStyle(label: string, isSelected: boolean) {
-    const count = counts[label] || 0;
-    const pct = count / target;
-    let bg = 'var(--bg-card)';
-    let border = 'var(--border-color)';
-    let color = 'var(--text-primary)';
-    if (isSelected) { bg = 'var(--accent)'; border = 'var(--accent)'; color = 'white'; }
-    else if (pct >= 1) { bg = 'var(--green-subtle, #ebfbee)'; border = 'var(--green, #2b8a3e)'; color = 'var(--green, #2b8a3e)'; }
-    else if (pct > 0) { bg = 'var(--orange-subtle, #fff9db)'; border = 'var(--orange, #e67700)'; color = 'var(--orange, #e67700)'; }
+    const q = quality[label];
+    let bg = 'var(--bg-card)', border = 'var(--border-color)', color = 'var(--text-secondary)';
+    if (isSelected) {
+      bg = 'var(--accent)'; border = 'var(--accent)'; color = 'white';
+    } else if (q) {
+      if (q.good >= target) {
+        bg = 'var(--green-subtle, #ebfbee)'; border = 'var(--green, #2b8a3e)'; color = 'var(--green, #2b8a3e)';
+      } else if (q.good > 0) {
+        bg = 'var(--accent-subtle, #edf2ff)'; border = 'var(--accent, #3b5bdb)'; color = 'var(--accent, #3b5bdb)';
+      } else if (q.fair > 0) {
+        bg = 'var(--orange-subtle, #fff9db)'; border = 'var(--orange, #e67700)'; color = 'var(--orange, #e67700)';
+      } else if (q.poor > 0) {
+        bg = 'var(--red-subtle, #ffe3e3)'; border = 'var(--red, #fa5252)'; color = 'var(--red, #fa5252)';
+      }
+    }
     return {
-      padding: '7px 4px 5px',
-      border: `1px solid ${border}`,
-      borderRadius: '7px',
-      background: bg,
-      color,
-      cursor: 'pointer',
-      textAlign: 'center' as const,
-      display: 'flex',
-      flexDirection: 'column' as const,
-      alignItems: 'center',
-      gap: '2px',
-      transition: 'all 120ms ease',
-      userSelect: 'none' as const,
+      padding: '7px 4px 5px', border: `1px solid ${border}`, borderRadius: '7px',
+      background: bg, color, cursor: 'pointer', textAlign: 'center' as const,
+      display: 'flex', flexDirection: 'column' as const, alignItems: 'center', gap: '1px',
+      transition: 'all 120ms ease', userSelect: 'none' as const, position: 'relative' as const,
     };
   }
 
@@ -201,6 +219,22 @@ export default function LabelManager({
 
       {/* Huruf A-Z */}
       <div className="sidebar-section" style={{ paddingBottom: '8px' }}>
+        {/* Quality legend */}
+        <div style={{ display: 'flex', gap: '8px', fontSize: '0.68rem', color: 'var(--text-muted)', marginBottom: '6px', flexWrap: 'wrap' }}>
+          <span style={{ display: 'flex', alignItems: 'center', gap: '3px' }}>
+            <span style={{ width: 8, height: 8, borderRadius: 2, background: 'var(--green-subtle)', border: '1px solid var(--green, #2b8a3e)', display: 'inline-block' }} />
+            Selesai
+          </span>
+          <span style={{ display: 'flex', alignItems: 'center', gap: '3px' }}>
+            <span style={{ width: 8, height: 8, borderRadius: 2, background: 'var(--accent-subtle)', border: '1px solid var(--accent)', display: 'inline-block' }} />
+            Dalam proses
+          </span>
+          <span style={{ display: 'flex', alignItems: 'center', gap: '3px' }}>
+            <span style={{ width: 8, height: 8, borderRadius: 2, background: 'var(--orange-subtle)', border: '1px solid var(--orange)', display: 'inline-block' }} />
+            Kualitas cukup
+          </span>
+        </div>
+
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '8px' }}>
           <div className="sidebar-title" style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: 0 }}>
             <Hash size={12} /> Huruf ({hurufLabels.length}/26)
@@ -222,21 +256,34 @@ export default function LabelManager({
           </div>
         ) : (
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: '4px' }}>
-            {hurufLabels.map(label => (
-              <button
-                key={label}
-                onClick={() => onSelectLabel(label)}
-                style={hurufTileStyle(label, selectedLabel === label)}
-                title={`${label.toUpperCase()} — ${counts[label] || 0}/${target} rekaman`}
-              >
-                <span style={{ fontSize: '0.9rem', fontWeight: 700, lineHeight: 1 }}>
-                  {label.toUpperCase()}
-                </span>
-                <span style={{ fontSize: '0.58rem', fontWeight: 400, opacity: 0.85, lineHeight: 1 }}>
-                  {counts[label] || 0}
-                </span>
-              </button>
-            ))}
+            {hurufLabels.map(label => {
+              const q = quality[label];
+              const complete = q ? q.good >= target : false;
+              const isSelected = selectedLabel === label;
+              const goodCount = q?.good ?? 0;
+              const extra = q ? q.fair + q.poor : 0;
+              const tooltipParts = q
+                ? [`Baik: ${q.good}`, q.fair > 0 ? `Cukup: ${q.fair}` : '', q.poor > 0 ? `Buruk: ${q.poor}` : ''].filter(Boolean).join(' · ')
+                : 'Belum ada rekaman';
+              return (
+                <button
+                  key={label}
+                  onClick={() => onSelectLabel(label)}
+                  style={hurufTileStyle(label, isSelected)}
+                  title={`${label.toUpperCase()} — ${tooltipParts} (target: ${target})`}
+                >
+                  {complete && !isSelected && (
+                    <CheckCircle2 size={8} style={{ position: 'absolute', top: 3, right: 3, color: 'var(--green, #2b8a3e)' }} />
+                  )}
+                  <span style={{ fontSize: '0.9rem', fontWeight: 700, lineHeight: 1 }}>
+                    {label.toUpperCase()}
+                  </span>
+                  <span style={{ fontSize: '0.58rem', fontWeight: 500, lineHeight: 1 }}>
+                    {complete ? '✓' : goodCount > 0 ? goodCount : (extra > 0 ? `~${extra}` : '0')}
+                  </span>
+                </button>
+              );
+            })}
           </div>
         )}
       </div>
@@ -294,7 +341,7 @@ export default function LabelManager({
                     {label}
                   </span>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexShrink: 0 }}>
-                    <LabelProgress count={counts[label] || 0} target={target} />
+                    <QualityProgress q={quality[label] ?? { total: 0, good: 0, fair: 0, poor: 0 }} target={target} />
                     <div className="label-actions">
                       <button className="btn-icon" title="Ubah nama" onClick={e => { e.stopPropagation(); startEditing(label); }}>
                         <Edit2 size={13} />

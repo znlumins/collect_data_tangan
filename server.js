@@ -256,7 +256,7 @@ app.post('/api/:signType/recordings', validateSignType, upload.single('video'), 
     fs.writeFileSync(landmarkPath, landmarks);
   }
 
-  const parsedHandDetectionRate = parseFloat(handDetectionRate) || 0;
+  const parsedHandDetectionRate = Math.min(parseFloat(handDetectionRate) || 0, 1.0);
   const quality = parsedHandDetectionRate >= 0.7 ? 'good' : parsedHandDetectionRate >= 0.4 ? 'fair' : 'poor';
 
   const recording = {
