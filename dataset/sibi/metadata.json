@@ -1,55 +1,11 @@
 {
   "labels": [
-    "aku",
-    "dalam",
-    "dunia",
-    "antara",
-    "guru",
-    "dan",
-    "agar",
-    "ilmu",
-    "kelas",
-    "hanya",
-    "duduk",
-    "ada",
-    "buku",
-    "juga",
-    "baca",
-    "dankata",
-    "demi",
-    "kata",
-    "harus",
-    "cari",
-    "informasi",
-    "atau",
-    "dari",
-    "akan",
-    "hapus",
-    "gambar",
-    "cerita",
-    "dengan",
-    "banyak",
-    "ini",
-    "kampus"
+    "a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m",
+    "n", "o", "p", "q", "r", "s", "t", "u", "v", "w", "x", "y", "z",
+    "aku", "dalam", "dunia", "antara", "guru", "dan", "agar", "ilmu",
+    "kelas", "hanya", "duduk", "ada", "buku", "juga", "baca", "dankata",
+    "demi", "kata", "harus", "cari", "informasi", "atau", "dari", "akan",
+    "hapus", "gambar", "cerita", "dengan", "banyak", "ini", "kampus"
   ],
-  "recordings": [
-    {
-      "id": "e7b62101-047f-4dc8-bd54-3a60b1ec22c3",
-      "label": "aku",
-      "signType": "sibi",
-      "videoFile": "e7b62101-047f-4dc8-bd54-3a60b1ec22c3.webm",
-      "landmarkFile": "e7b62101-047f-4dc8-bd54-3a60b1ec22c3_landmarks.json",
-      "frameCount": 64,
-      "createdAt": "2026-06-08T11:27:01.355Z"
-    },
-    {
-      "id": "96e950eb-194e-4caa-9853-1fe4919b2e3a",
-      "label": "aku",
-      "signType": "sibi",
-      "videoFile": "96e950eb-194e-4caa-9853-1fe4919b2e3a.webm",
-      "landmarkFile": "96e950eb-194e-4caa-9853-1fe4919b2e3a_landmarks.json",
-      "frameCount": 500,
-      "createdAt": "2026-06-08T13:08:07.880Z"
-    }
-  ]
+  "recordings": []
 }

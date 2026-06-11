@@ -4,7 +4,7 @@ import LabelManager from './components/LabelManager';
 import WebCamRecorder from './components/WebCamRecorder';
 import DatasetList from './components/DatasetList';
 import { fetchStats, fetchLabels, exportDataset, downloadZip } from './utils/api';
-import { Download, Video, Database, User, Archive } from 'lucide-react';
+import { Download, Video, Database, User, UserPlus, Trash2, Archive } from 'lucide-react';
 
 interface Stats {
   sibi: { labels: number; recordings: number };
@@ -22,7 +22,13 @@ function App() {
   const [labels, setLabels] = useState<string[]>([]);
   const [refreshTrigger, setRefreshTrigger] = useState(0);
   const [toasts, setToasts] = useState<{ id: number; msg: string; type: string }[]>([]);
+  const [signers, setSigners] = useState<string[]>(() => {
+    try { return JSON.parse(localStorage.getItem('signersList') || '[]'); }
+    catch { return []; }
+  });
   const [signerTag, setSignerTag] = useState(() => localStorage.getItem('signerTag') || '');
+  const [addingNewSigner, setAddingNewSigner] = useState(false);
+  const [newSignerInput, setNewSignerInput] = useState('');
 
   const refresh = () => setRefreshTrigger(prev => prev + 1);
 
@@ -49,9 +55,31 @@ function App() {
     }, 3000);
   };
 
-  const handleSignerTagChange = (val: string) => {
-    setSignerTag(val);
-    localStorage.setItem('signerTag', val);
+  const selectSigner = (name: string) => {
+    setSignerTag(name);
+    localStorage.setItem('signerTag', name);
+  };
+
+  const addSigner = () => {
+    const name = newSignerInput.trim();
+    if (!name) return;
+    const normalized = name.charAt(0).toUpperCase() + name.slice(1);
+    if (!signers.includes(normalized)) {
+      const updated = [...signers, normalized];
+      setSigners(updated);
+      localStorage.setItem('signersList', JSON.stringify(updated));
+    }
+    selectSigner(normalized);
+    setNewSignerInput('');
+    setAddingNewSigner(false);
+  };
+
+  const removeSigner = (name: string) => {
+    if (!confirm(`Hapus perekam "${name}" dari daftar?`)) return;
+    const updated = signers.filter(s => s !== name);
+    setSigners(updated);
+    localStorage.setItem('signersList', JSON.stringify(updated));
+    if (signerTag === name) selectSigner(updated[0] || '');
   };
 
   const handleDownloadZip = async () => {
@@ -111,23 +139,67 @@ function App() {
               </div>
             </>
           )}
-          <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+          {/* Signer Manager */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
             <User size={14} style={{ color: 'var(--text-muted)', flexShrink: 0 }} />
-            <input
-              type="text"
-              placeholder="Kode perekam (mis: s001)"
-              value={signerTag}
-              onChange={e => handleSignerTagChange(e.target.value)}
-              style={{
-                fontSize: '0.8rem',
-                padding: '4px 8px',
-                border: '1px solid var(--border)',
-                borderRadius: '6px',
-                background: 'var(--bg-input, #fff)',
-                color: 'var(--text)',
-                width: '160px',
-              }}
-            />
+            {addingNewSigner ? (
+              <>
+                <input
+                  autoFocus
+                  type="text"
+                  placeholder="Nama perekam (mis: Rafif)"
+                  value={newSignerInput}
+                  onChange={e => setNewSignerInput(e.target.value)}
+                  onKeyDown={e => {
+                    if (e.key === 'Enter') addSigner();
+                    if (e.key === 'Escape') { setAddingNewSigner(false); setNewSignerInput(''); }
+                  }}
+                  style={{ fontSize: '0.8rem', padding: '4px 8px', border: '1px solid var(--border)', borderRadius: '6px', background: 'var(--bg-input, #fff)', color: 'var(--text)', width: '150px' }}
+                />
+                <button
+                  className="btn btn-sm btn-primary"
+                  onClick={addSigner}
+                  disabled={!newSignerInput.trim()}
+                  style={{ padding: '4px 10px', fontSize: '0.78rem' }}
+                >
+                  Simpan
+                </button>
+                <button
+                  className="btn btn-sm"
+                  onClick={() => { setAddingNewSigner(false); setNewSignerInput(''); }}
+                  style={{ padding: '4px 8px', fontSize: '0.78rem' }}
+                >
+                  Batal
+                </button>
+              </>
+            ) : (
+              <>
+                <select
+                  value={signerTag}
+                  onChange={e => selectSigner(e.target.value)}
+                  style={{ fontSize: '0.8rem', padding: '4px 8px', border: '1px solid var(--border-color)', borderRadius: '6px', background: 'var(--bg-input, #fff)', color: signerTag ? 'var(--text)' : 'var(--text-muted)', minWidth: '110px', cursor: 'pointer' }}
+                >
+                  <option value="">-- Perekam --</option>
+                  {signers.map(s => <option key={s} value={s}>{s}</option>)}
+                </select>
+                <button
+                  title="Tambah perekam baru"
+                  onClick={() => setAddingNewSigner(true)}
+                  style={{ display: 'flex', alignItems: 'center', padding: '5px 7px', border: '1px solid var(--border-color)', borderRadius: '6px', background: 'transparent', color: 'var(--text-muted)', cursor: 'pointer' }}
+                >
+                  <UserPlus size={13} />
+                </button>
+                {signerTag && (
+                  <button
+                    title={`Hapus "${signerTag}" dari daftar`}
+                    onClick={() => removeSigner(signerTag)}
+                    style={{ display: 'flex', alignItems: 'center', padding: '5px 6px', border: '1px solid var(--border-color)', borderRadius: '6px', background: 'transparent', color: 'var(--red)', cursor: 'pointer' }}
+                  >
+                    <Trash2 size={12} />
+                  </button>
+                )}
+              </>
+            )}
           </div>
           <button className="btn btn-sm" onClick={handleExport} title="Ekspor metadata sebagai JSON" style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
             <Download size={14} /> Ekspor JSON
