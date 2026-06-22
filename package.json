@@ -4,7 +4,7 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "dev": "concurrently \"vite\" \"nodemon --ignore dataset/ server.js\"",
+    "dev": "concurrently \"nodemon --ignore dataset/ server.js\" \"wait-on tcp:3001 && vite\"",
     "dev:client": "vite",
     "dev:server": "nodemon --ignore dataset/ server.js",
     "build": "tsc -b && vite build",
@@ -41,6 +41,7 @@
     "playwright": "^1.60.0",
     "typescript": "~6.0.2",
     "typescript-eslint": "^8.59.2",
-    "vite": "^8.0.12"
+    "vite": "^8.0.12",
+    "wait-on": "^9.0.10"
   }
 }
