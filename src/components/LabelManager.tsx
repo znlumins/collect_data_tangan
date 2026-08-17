@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { fetchLabels, addLabel, renameLabel, deleteLabel, fetchRecordings, type Recording } from '../utils/api';
+import { fetchLabels, addLabel, renameLabel, deleteLabel, type LabelQuality } from '../utils/api';
 import { Edit2, Trash2, Plus, Tag, Hash, CheckCircle2 } from 'lucide-react';
 
 interface LabelManagerProps {
@@ -11,13 +11,8 @@ interface LabelManagerProps {
   refreshTrigger: number;
   onRefresh: () => void;
   signerTag: string;
-}
-
-interface LabelQuality {
-  total: number;
-  good: number;
-  fair: number;
-  poor: number;
+  quality: Record<string, LabelQuality>;
+  target: number;
 }
 
 // Multi-segment quality progress bar for kata labels
@@ -53,13 +48,13 @@ export default function LabelManager({
   refreshTrigger,
   onRefresh,
   signerTag,
+  quality,
+  target,
 }: LabelManagerProps) {
   const [labels, setLabels] = useState<string[]>([]);
   const [newLabel, setNewLabel] = useState('');
   const [editingLabel, setEditingLabel] = useState<string | null>(null);
   const [editValue, setEditValue] = useState('');
-  const [quality, setQuality] = useState<Record<string, LabelQuality>>({});
-  const [target, setTarget] = useState(() => Number(localStorage.getItem('labelTarget') || 30));
   const renameDoneRef = useRef(false);
 
   const hurufLabels = labels.filter(l => /^[a-z]$/.test(l)).sort();
@@ -69,20 +64,7 @@ export default function LabelManager({
   const loadLabels = useCallback(async () => {
     const data = await fetchLabels(signType);
     setLabels(data);
-    const allRecs: Recording[] = await fetchRecordings(signType);
-    // Filter by signer: kalau signer dipilih, tampilkan progress milik signer itu saja
-    const recs = signerTag ? allRecs.filter(r => r.signerTag === signerTag) : allRecs;
-    const qMap: Record<string, LabelQuality> = {};
-    recs.forEach(r => {
-      if (!qMap[r.label]) qMap[r.label] = { total: 0, good: 0, fair: 0, poor: 0 };
-      qMap[r.label].total++;
-      const q = r.quality || (r.handDetectionRate >= 0.7 ? 'good' : r.handDetectionRate >= 0.4 ? 'fair' : 'poor');
-      if (q === 'good') qMap[r.label].good++;
-      else if (q === 'fair') qMap[r.label].fair++;
-      else qMap[r.label].poor++;
-    });
-    setQuality(qMap);
-  }, [signType, signerTag]);
+  }, [signType]);
 
   useEffect(() => {
     loadLabels();
@@ -200,18 +182,8 @@ export default function LabelManager({
         </div>
       </div>
 
-      {/* Target & Semua */}
+      {/* Semua Rekaman */}
       <div className="sidebar-section" style={{ paddingBottom: '8px' }}>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '8px' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '0.78rem', color: 'var(--text-muted)' }}>
-            <span>Target per label:</span>
-            <input
-              type="number" min={1} max={999} value={target}
-              onChange={e => { const v = Math.max(1, Number(e.target.value) || 1); setTarget(v); localStorage.setItem('labelTarget', String(v)); }}
-              style={{ width: '46px', padding: '2px 4px', fontSize: '0.78rem', border: '1px solid var(--border-color)', borderRadius: '4px', background: 'var(--bg-input, #fff)', color: 'var(--text)', textAlign: 'center' }}
-            />
-          </div>
-        </div>
         <div
           className={`label-item ${selectedLabel === null ? 'active' : ''}`}
           onClick={() => onSelectLabel(null)}

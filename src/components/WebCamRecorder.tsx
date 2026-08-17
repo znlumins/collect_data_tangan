@@ -13,6 +13,8 @@ interface WebCamRecorderProps {
   selectedLabel: string | null;
   labels: string[];
   signerTag: string;
+  /** false saat tab Dataset dibuka — komponen tetap mounted (kamera & MediaPipe tidak di-load ulang) */
+  active: boolean;
   onRecorded: () => void;
   onAutoAdvance: () => void;
   onToast: (msg: string, type?: 'success' | 'error') => void;
@@ -57,6 +59,7 @@ export default function WebCamRecorder({
   selectedLabel,
   labels,
   signerTag,
+  active,
   onRecorded,
   onAutoAdvance,
   onToast,
@@ -81,8 +84,15 @@ export default function WebCamRecorder({
   const handFramesRef = useRef(0);       // frame dengan tangan terdeteksi saat recording
   const batchDoneRef = useRef(0);
   const batchTargetRef = useRef(1);
+  const batchTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null); // jeda 2s antar rekaman
+  const batchActiveRef = useRef(false);   // batch sedang berjalan (termasuk saat jeda/countdown)
+  const abortBatchRef = useRef(false);    // user minta berhenti → jangan lanjut rekaman berikutnya
+  const discardClipRef = useRef(false);   // klip yang sedang direkam dibuang (stop di tengah)
+  const savingRef = useRef(false);
+  const lowFpsWarnedRef = useRef(false);   // peringatan device lambat cukup sekali per batch
   const waitingForHandRef = useRef(false);
   const landmarkDetectedRef = useRef(false);
+  const activeRef = useRef(true);          // tab Perekaman sedang dibuka?
   const activeRecordSignTypeRef = useRef(signType);
   const activeRecordLabelRef = useRef(selectedLabel || '');
 
@@ -99,6 +109,8 @@ export default function WebCamRecorder({
   const [landmarkDetected, setLandmarkDetected] = useState(false);
   const [batchTarget, setBatchTarget] = useState(1);
   const [batchDone, setBatchDone] = useState(0);
+  const [batchActive, setBatchActive] = useState(false);
+  const [stopping, setStopping] = useState(false);
   const [waitingForHand, setWaitingForHand] = useState(false);
   const [autoAdvance, setAutoAdvance] = useState(() => localStorage.getItem('autoAdvance') === 'true');
 
@@ -106,11 +118,20 @@ export default function WebCamRecorder({
 
   // Keep refs in sync with state/props
   useEffect(() => { onToastRef.current = onToast; }, [onToast]);
+  useEffect(() => {
+    activeRef.current = active;
+    // Status landmark jadi basi saat tab tidak aktif — reset supaya warmup
+    // (tunggu tangan) tetap jalan waktu user balik ke tab Perekaman
+    if (!active) {
+      setLandmarkDetected(false);
+      landmarkDetectedRef.current = false;
+    }
+  }, [active]);
   useEffect(() => { batchTargetRef.current = batchTarget; }, [batchTarget]);
   useEffect(() => { landmarkDetectedRef.current = landmarkDetected; }, [landmarkDetected]);
 
   useEffect(() => {
-    if (!recordingRef.current && countdownIntervalRef.current === null && !waitingForHandRef.current) {
+    if (!recordingRef.current && countdownIntervalRef.current === null && !waitingForHandRef.current && !batchActiveRef.current) {
       setCurrentLabel(selectedLabel || '');
       setFrameCount(0);
       frameCountRef.current = 0;
@@ -310,6 +331,10 @@ export default function WebCamRecorder({
     if (!mountedRef.current) return;
     animationRef.current = requestAnimationFrame(processFrame);
 
+    // Tab Dataset dibuka → jangan bakar CPU untuk inferensi yang tak terlihat,
+    // kecuali batch masih berjalan (landmark-nya tetap harus terkumpul)
+    if (!activeRef.current && !recordingRef.current && !batchActiveRef.current) return;
+
     const now = Date.now();
     const video = videoRef.current;
     if (
@@ -344,6 +369,7 @@ export default function WebCamRecorder({
       if (animationRef.current) cancelAnimationFrame(animationRef.current);
       if (countdownIntervalRef.current) clearInterval(countdownIntervalRef.current);
       if (frameTimerRef.current) clearInterval(frameTimerRef.current);
+      if (batchTimeoutRef.current) clearTimeout(batchTimeoutRef.current);
       if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
         mediaRecorderRef.current.onstop = null;
         try { mediaRecorderRef.current.stop(); } catch (err) { console.error(err); }
@@ -357,12 +383,15 @@ export default function WebCamRecorder({
       if (e.code !== 'Space') return;
       const tag = (e.target as HTMLElement).tagName;
       if (tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA') return;
+      // Komponen tetap mounted saat tab Dataset dibuka — Space di sana tidak boleh
+      // memulai rekaman yang tak terlihat, tapi tetap boleh menghentikan batch berjalan
+      if (!activeRef.current && !recordingRef.current && !batchActiveRef.current) return;
       e.preventDefault();
       if (recordingRef.current) {
-        stopRecording();
-      } else if (countdownIntervalRef.current !== null || waitingForHandRef.current) {
+        stopRecording(true);
+      } else if (countdownIntervalRef.current !== null || waitingForHandRef.current || batchActiveRef.current) {
         cancelCountdown();
-      } else if (cameraReady && currentLabel) {
+      } else if (activeRef.current && cameraReady && currentLabel) {
         startCountdownAndRecord();
       }
     };
@@ -372,7 +401,31 @@ export default function WebCamRecorder({
 
   // --- Recording Logic ---
 
+  // Bersihkan SEMUA timer batch & kembalikan UI ke idle
+  const endBatch = (msg?: string, type: 'success' | 'error' = 'success') => {
+    if (batchTimeoutRef.current) { clearTimeout(batchTimeoutRef.current); batchTimeoutRef.current = null; }
+    if (countdownIntervalRef.current) { clearInterval(countdownIntervalRef.current); countdownIntervalRef.current = null; }
+    if (frameTimerRef.current) { clearInterval(frameTimerRef.current); frameTimerRef.current = null; }
+    recordingRef.current = false;
+    waitingForHandRef.current = false;
+    batchActiveRef.current = false;
+    abortBatchRef.current = false;
+    discardClipRef.current = false;
+    batchDoneRef.current = 0;
+    frameCountRef.current = 0;
+    setRecording(false);
+    setWaitingForHand(false);
+    setCountdown(null);
+    setBatchActive(false);
+    setStopping(false);
+    setBatchDone(0);
+    setFrameCount(0);
+    if (msg && mountedRef.current) onToastRef.current(msg, type);
+  };
+
   const doStartCountdown = () => {
+    if (countdownIntervalRef.current) { clearInterval(countdownIntervalRef.current); countdownIntervalRef.current = null; }
+    if (abortBatchRef.current) return;
     setCountdown(3);
     let c = 3;
     countdownIntervalRef.current = setInterval(() => {
@@ -387,6 +440,7 @@ export default function WebCamRecorder({
         setCountdown(null);
         if (countdownIntervalRef.current) clearInterval(countdownIntervalRef.current);
         countdownIntervalRef.current = null;
+        if (abortBatchRef.current) { endBatch(); return; }
         startRecording();
       }
     }, 1000);
@@ -397,11 +451,18 @@ export default function WebCamRecorder({
       onToastRef.current('Pilih label terlebih dahulu', 'error');
       return;
     }
+    // Cegah dobel-start (mis. klik saat jeda batch masih ada timer menggantung)
+    if (recordingRef.current || batchActiveRef.current) return;
 
     setFrameCount(0);
     frameCountRef.current = 0;
     setBatchDone(0);
     batchDoneRef.current = 0;
+    abortBatchRef.current = false;
+    discardClipRef.current = false;
+    lowFpsWarnedRef.current = false;
+    batchActiveRef.current = true;
+    setBatchActive(true);
     activeRecordSignTypeRef.current = signType;
     activeRecordLabelRef.current = currentLabel;
 
@@ -413,26 +474,27 @@ export default function WebCamRecorder({
     doStartCountdown();
   };
 
+  // Batalkan batch saat countdown / menunggu tangan / jeda antar rekaman
   const cancelCountdown = () => {
-    if (countdownIntervalRef.current) {
-      clearInterval(countdownIntervalRef.current);
-      countdownIntervalRef.current = null;
+    const saved = batchDoneRef.current;
+    const total = batchTargetRef.current;
+
+    // Kalau upload rekaman terakhir masih jalan, tandai abort saja —
+    // handleSave yang akan menutup batch setelah selesai menyimpan.
+    if (savingRef.current) {
+      abortBatchRef.current = true;
+      onToastRef.current('Berhenti setelah rekaman ini tersimpan...', 'success');
+      return;
     }
-    if (frameTimerRef.current) {
-      clearInterval(frameTimerRef.current);
-      frameTimerRef.current = null;
-    }
-    waitingForHandRef.current = false;
-    setWaitingForHand(false);
-    setCountdown(null);
-    setFrameCount(0);
-    frameCountRef.current = 0;
-    setBatchDone(0);
-    batchDoneRef.current = 0;
+
+    endBatch(
+      saved > 0 ? `Batch dihentikan — ${saved}/${total} rekaman tersimpan` : undefined
+    );
+    if (saved > 0) onRecorded();
   };
 
   const startRecording = () => {
-    if (!streamRef.current) return;
+    if (!streamRef.current || recordingRef.current) return;
 
     landmarksRef.current = [];
     frameCountRef.current = 0;
@@ -474,27 +536,68 @@ export default function WebCamRecorder({
     }, FRAME_INTERVAL_MS);
   };
 
-  const stopRecording = () => {
+  /**
+   * userInitiated = true → user menekan Stop di tengah rekaman:
+   * seluruh batch dihentikan dan klip parsial dibuang (frame-nya tidak lengkap).
+   * userInitiated = false → target frame tercapai, batch lanjut seperti biasa.
+   */
+  const stopRecording = (userInitiated = false) => {
     if (frameTimerRef.current) {
       clearInterval(frameTimerRef.current);
       frameTimerRef.current = null;
     }
+    if (userInitiated) {
+      abortBatchRef.current = true;
+      discardClipRef.current = true;
+      setStopping(true);
+      if (batchTimeoutRef.current) { clearTimeout(batchTimeoutRef.current); batchTimeoutRef.current = null; }
+    }
     recordingRef.current = false;
     setRecording(false);
-    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
-      mediaRecorderRef.current.stop();
+
+    const mr = mediaRecorderRef.current;
+    if (mr && mr.state !== 'inactive') {
+      mr.stop(); // → onstop → handleSave()
+    } else if (userInitiated) {
+      // MediaRecorder sudah mati: tutup batch di sini, onstop tidak akan datang
+      const saved = batchDoneRef.current;
+      const total = batchTargetRef.current;
+      endBatch(saved > 0 ? `Dihentikan — ${saved}/${total} rekaman tersimpan` : 'Perekaman dihentikan');
+      if (saved > 0) onRecorded();
     }
   };
 
   const handleSave = async () => {
     if (!mountedRef.current) return;
+
+    // Stop manual di tengah rekaman → klip parsial dibuang, batch ditutup
+    if (discardClipRef.current) {
+      const saved = batchDoneRef.current;
+      const total = batchTargetRef.current;
+      const partial = frameCountRef.current;
+      chunksRef.current = [];
+      landmarksRef.current = [];
+      endBatch(
+        saved > 0
+          ? `Dihentikan — ${saved}/${total} tersimpan, klip terakhir (${partial} frame) dibuang`
+          : `Dihentikan — klip ${partial} frame belum lengkap, tidak disimpan`
+      );
+      if (saved > 0) onRecorded();
+      return;
+    }
+
+    savingRef.current = true;
     setSaving(true);
     try {
       const videoBlob = new Blob(chunksRef.current, { type: 'video/webm' });
       if (videoBlob.size === 0) {
+        // Jangan gantung batch — tutup semuanya biar tombol kembali ke "Rekam"
+        savingRef.current = false;
         if (mountedRef.current) {
-          onToastRef.current('Perekaman gagal: Video kosong atau kamera terputus', 'error');
           setSaving(false);
+          const saved = batchDoneRef.current;
+          endBatch('Perekaman gagal: Video kosong atau kamera terputus', 'error');
+          if (saved > 0) onRecorded();
         }
         return;
       }
@@ -502,9 +605,23 @@ export default function WebCamRecorder({
       const saveSignType = activeRecordSignTypeRef.current;
       const saveLabel = activeRecordLabelRef.current;
       const capturedFrameCount = frameCountRef.current;
-      const handDetectionRate = capturedFrameCount > 0
-        ? Math.min(Math.round((handFramesRef.current / capturedFrameCount) * 100) / 100, 1.0)
+      // Rasio dihitung terhadap frame yang BENAR-BENAR diproses MediaPipe,
+      // bukan terhadap tick timer. Kalau dibagi tick timer, laptop lemot
+      // (MediaPipe cuma sanggup 8fps dari 30fps) selalu dapat label "buruk"
+      // walaupun tangannya terdeteksi sempurna di semua frame yang diproses.
+      const processedFrames = landmarksRef.current.length;
+      const handDetectionRate = processedFrames > 0
+        ? Math.min(Math.round((handFramesRef.current / processedFrames) * 100) / 100, 1.0)
         : 0;
+
+      // Peringatkan sekali per batch kalau device terlalu lambat → landmark jarang
+      if (processedFrames < capturedFrameCount * 0.3 && !lowFpsWarnedRef.current) {
+        lowFpsWarnedRef.current = true;
+        onToastRef.current(
+          `Perangkat lambat: hanya ${processedFrames}/${capturedFrameCount} frame yang ter-landmark. Tutup aplikasi lain agar dataset lebih padat.`,
+          'error'
+        );
+      }
 
       await saveRecording(
         saveSignType, saveLabel, videoBlob,
@@ -517,14 +634,27 @@ export default function WebCamRecorder({
       setBatchDone(batchDoneRef.current);
       const currentBatchTarget = batchTargetRef.current;
 
+      // User menekan stop/batal saat upload berjalan → berhenti di sini
+      if (abortBatchRef.current) {
+        const saved = batchDoneRef.current;
+        savingRef.current = false;
+        setSaving(false);
+        endBatch(`Dihentikan — ${saved}/${currentBatchTarget} rekaman tersimpan`);
+        onRecorded();
+        return;
+      }
+
       if (batchDoneRef.current < currentBatchTarget) {
         // Lanjutkan batch berikutnya setelah 2 detik
         onToastRef.current(
           `${batchDoneRef.current}/${currentBatchTarget} tersimpan — lanjut dalam 2 detik...`,
           'success'
         );
-        setTimeout(() => {
+        if (batchTimeoutRef.current) clearTimeout(batchTimeoutRef.current);
+        batchTimeoutRef.current = setTimeout(() => {
+          batchTimeoutRef.current = null;
           if (!mountedRef.current) return;
+          if (abortBatchRef.current || !batchActiveRef.current) { endBatch(); return; }
           setFrameCount(0);
           frameCountRef.current = 0;
           if (!landmarkDetectedRef.current) {
@@ -540,20 +670,31 @@ export default function WebCamRecorder({
         const msg = currentBatchTarget > 1
           ? `Batch selesai! ${currentBatchTarget} rekaman untuk "${saveLabel}"`
           : `Tersimpan! ${capturedFrameCount} frame — kualitas ${qualityLabel} (${Math.round(handDetectionRate * 100)}%)`;
-        onToastRef.current(msg, 'success');
+        batchActiveRef.current = false;
+        setBatchActive(false);
         setBatchDone(0);
         batchDoneRef.current = 0;
+        onToastRef.current(msg, 'success');
         onRecorded();
         if (autoAdvance) setTimeout(() => { if (mountedRef.current) onAutoAdvance(); }, 500);
       }
-    } catch {
-      if (mountedRef.current) onToastRef.current('Gagal menyimpan rekaman', 'error');
+    } catch (err) {
+      // Upload gagal → jangan biarkan batch menggantung
+      const saved = batchDoneRef.current;
+      if (mountedRef.current) {
+        const reason = err instanceof Error ? err.message : 'Gagal menyimpan rekaman';
+        endBatch(`${reason} — batch dihentikan`, 'error');
+        if (saved > 0) onRecorded();
+      }
     }
+    savingRef.current = false;
     if (mountedRef.current) setSaving(false);
   };
 
   const progressPct = (frameCount / targetFrames) * 100;
-  const isBusy = recording || countdown !== null || saving || waitingForHand;
+  const isBusy = recording || countdown !== null || saving || waitingForHand || batchActive;
+  // Jeda 2 detik antar rekaman dalam batch — user harus tetap bisa menghentikan di sini
+  const inBatchPause = batchActive && !recording && !saving && !stopping && countdown === null && !waitingForHand;
 
   return (
     <div className="recorder-container">
@@ -595,6 +736,21 @@ export default function WebCamRecorder({
         {countdown !== null && (
           <div className="recorder-overlay">
             <div className="countdown-display">{countdown}</div>
+          </div>
+        )}
+
+        {/* Jeda antar rekaman dalam batch */}
+        {inBatchPause && (
+          <div className="recorder-overlay">
+            <div style={{ textAlign: 'center', color: 'white' }}>
+              <Loader2 size={36} style={{ marginBottom: '10px', animation: 'spin 1s linear infinite' }} />
+              <div style={{ fontSize: '1.1rem', fontWeight: 600 }}>
+                Bersiap rekaman {batchDone + 1}/{batchTarget}...
+              </div>
+              <div style={{ fontSize: '0.85rem', opacity: 0.8, marginTop: '6px' }}>
+                Tekan Batal atau Space untuk menghentikan batch
+              </div>
+            </div>
           </div>
         )}
 
@@ -701,26 +857,42 @@ export default function WebCamRecorder({
         </div>
 
         <div className="recorder-btn-group">
-          {(waitingForHand || countdown !== null) ? (
+          {recording ? (
+            <button
+              className="btn btn-danger"
+              onClick={() => stopRecording(true)}
+              style={{ display: 'flex', alignItems: 'center', gap: '8px' }}
+            >
+              <Square size={16} fill="white" style={{ color: 'white' }} />
+              <span>
+                Stop{batchTarget > 1 ? ' Batch' : ''} ({frameCount}/{targetFrames})
+                <span style={{ fontSize: '0.75em', opacity: 0.7, marginLeft: '6px' }}>[Space]</span>
+              </span>
+            </button>
+          ) : (waitingForHand || countdown !== null || inBatchPause || (saving && batchActive && batchTarget > 1)) ? (
             <button
               className="btn btn-danger"
               onClick={cancelCountdown}
               style={{ display: 'flex', alignItems: 'center', gap: '6px' }}
             >
               <X size={16} />
-              {countdown !== null ? `Batal (${countdown})` : 'Batal'}
+              {countdown !== null
+                ? `Batal (${countdown})`
+                : batchTarget > 1
+                  ? `Batal Batch (${batchDone}/${batchTarget})`
+                  : 'Batal'}
             </button>
-          ) : !recording ? (
+          ) : (
             <button
               className="btn btn-primary"
               onClick={startCountdownAndRecord}
-              disabled={!cameraReady || !currentLabel || saving}
+              disabled={!cameraReady || !currentLabel || saving || stopping}
               style={{ display: 'flex', alignItems: 'center', gap: '8px' }}
             >
-              {saving ? (
+              {saving || stopping ? (
                 <>
                   <Loader2 size={16} style={{ animation: 'spin 1s linear infinite' }} />
-                  <span>Menyimpan...</span>
+                  <span>{stopping ? 'Menghentikan...' : 'Menyimpan...'}</span>
                 </>
               ) : (
                 <>
@@ -731,15 +903,6 @@ export default function WebCamRecorder({
                   </span>
                 </>
               )}
-            </button>
-          ) : (
-            <button
-              className="btn btn-danger"
-              onClick={stopRecording}
-              style={{ display: 'flex', alignItems: 'center', gap: '8px' }}
-            >
-              <Square size={16} fill="white" style={{ color: 'white' }} />
-              <span>Stop ({frameCount}/{targetFrames})</span>
             </button>
           )}
         </div>

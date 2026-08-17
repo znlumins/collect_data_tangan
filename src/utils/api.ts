@@ -45,6 +45,13 @@ export interface Recording {
   createdAt: string;
 }
 
+export interface LabelQuality {
+  total: number;
+  good: number;
+  fair: number;
+  poor: number;
+}
+
 export async function fetchRecordings(signType: string, label?: string): Promise<Recording[]> {
   const url = label
     ? `${BASE}/api/${signType}/recordings?label=${encodeURIComponent(label)}`
@@ -75,6 +82,16 @@ export async function saveRecording(
     method: 'POST',
     body: formData,
   });
+  // Tanpa cek ini, respons error (HTML/JSON 4xx-5xx) hanya muncul sebagai
+  // "Gagal menyimpan" tanpa alasan — susah didiagnosis saat sesi perekaman.
+  if (!res.ok) {
+    let msg = `Gagal menyimpan (HTTP ${res.status})`;
+    try {
+      const body = await res.json();
+      if (body?.error) msg = body.error;
+    } catch { /* respons bukan JSON */ }
+    throw new Error(msg);
+  }
   return res.json();
 }
 

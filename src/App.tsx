@@ -1,10 +1,10 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import './App.css';
 import LabelManager from './components/LabelManager';
 import WebCamRecorder from './components/WebCamRecorder';
 import DatasetList from './components/DatasetList';
-import { fetchStats, fetchLabels, exportDataset, downloadZip } from './utils/api';
-import { Download, Video, Database, User, UserPlus, Trash2, Archive } from 'lucide-react';
+import { fetchStats, fetchLabels, fetchRecordings, exportDataset, downloadZip, type LabelQuality } from './utils/api';
+import { Download, Video, Database, User, UserPlus, Trash2, Archive, CheckCircle2, Target } from 'lucide-react';
 
 interface Stats {
   sibi: { labels: number; recordings: number };
@@ -13,6 +13,100 @@ interface Stats {
 }
 
 type ViewTab = 'record' | 'dataset';
+
+const EMPTY_QUALITY: LabelQuality = { total: 0, good: 0, fair: 0, poor: 0 };
+
+interface TargetBannerProps {
+  signType: string;
+  selectedLabel: string | null;
+  labels: string[];
+  quality: Record<string, LabelQuality>;
+  target: number;
+  onTargetChange: (v: number) => void;
+  signerTag: string;
+}
+
+// Banner progress target — sticky di atas konten supaya tidak perlu scroll sidebar
+function TargetBanner({ signType, selectedLabel, labels, quality, target, onTargetChange, signerTag }: TargetBannerProps) {
+  const q = selectedLabel
+    ? quality[selectedLabel] ?? EMPTY_QUALITY
+    : labels.reduce(
+        (acc, l) => {
+          const lq = quality[l] ?? EMPTY_QUALITY;
+          return { total: acc.total + lq.total, good: acc.good + lq.good, fair: acc.fair + lq.fair, poor: acc.poor + lq.poor };
+        },
+        { ...EMPTY_QUALITY }
+      );
+
+  const goal = selectedLabel ? target : labels.length * target;
+  const remaining = Math.max(0, goal - q.good);
+  const complete = goal > 0 && q.good >= goal;
+  const goodPct = goal > 0 ? Math.min((q.good / goal) * 100, 100) : 0;
+  const fairPct = goal > 0 ? Math.min(((q.good + q.fair) / goal) * 100, 100) - goodPct : 0;
+  const poorPct = goal > 0 ? Math.min((q.total / goal) * 100, 100) - goodPct - fairPct : 0;
+  const doneLabels = labels.filter(l => (quality[l]?.good ?? 0) >= target).length;
+
+  return (
+    <div
+      style={{
+        position: 'sticky', top: 0, zIndex: 5,
+        display: 'flex', alignItems: 'center', gap: '16px', flexWrap: 'wrap',
+        padding: '12px 16px', marginBottom: '20px',
+        border: `1px solid ${complete ? 'var(--green)' : 'var(--border-color)'}`,
+        borderRadius: 'var(--radius-lg)',
+        background: complete ? 'var(--green-subtle)' : 'var(--bg-card)',
+        boxShadow: '0 2px 8px rgba(0,0,0,0.05)',
+      }}
+    >
+      {/* Judul + status */}
+      <div style={{ minWidth: '190px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.95rem', fontWeight: 700, color: complete ? 'var(--green)' : 'var(--text-primary)' }}>
+          {complete ? <CheckCircle2 size={15} /> : <Target size={15} />}
+          {selectedLabel ? `Target "${selectedLabel}"` : `Target ${signType.toUpperCase()} (semua label)`}
+        </div>
+        <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginTop: '2px' }}>
+          {complete
+            ? 'Target tercapai — boleh lanjut label berikutnya'
+            : selectedLabel
+              ? `Kurang ${remaining} rekaman baik lagi`
+              : `${doneLabels}/${labels.length} label selesai · kurang ${remaining} rekaman baik`}
+          {signerTag && ` · perekam ${signerTag}`}
+        </div>
+      </div>
+
+      {/* Progress bar */}
+      <div style={{ flex: 1, minWidth: '200px' }}>
+        <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: '5px' }}>
+          <span style={{ fontSize: '1.15rem', fontWeight: 700, fontVariantNumeric: 'tabular-nums', color: complete ? 'var(--green)' : 'var(--accent)' }}>
+            {q.good}
+            <span style={{ fontSize: '0.9rem', fontWeight: 600, color: 'var(--text-muted)' }}> / {goal} baik</span>
+          </span>
+          <span style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>
+            {q.fair > 0 && `${q.fair} cukup`}
+            {q.fair > 0 && q.poor > 0 && ' · '}
+            {q.poor > 0 && `${q.poor} buruk`}
+            {(q.fair > 0 || q.poor > 0) && ' (belum dihitung)'}
+          </span>
+        </div>
+        <div style={{ height: '8px', borderRadius: '4px', background: 'var(--border-color)', overflow: 'hidden', display: 'flex' }}>
+          <div style={{ width: `${goodPct}%`, background: complete ? 'var(--green)' : 'var(--accent)', transition: 'width 0.3s' }} />
+          <div style={{ width: `${Math.max(0, fairPct)}%`, background: 'var(--orange)' }} />
+          <div style={{ width: `${Math.max(0, poorPct)}%`, background: 'var(--red)' }} />
+        </div>
+      </div>
+
+      {/* Setelan target */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.8rem', color: 'var(--text-muted)' }}>
+        <span>Target/label</span>
+        <input
+          type="number" min={1} max={999} value={target}
+          onChange={e => onTargetChange(Number(e.target.value))}
+          style={{ width: '58px', padding: '5px 6px', fontSize: '0.9rem', fontWeight: 600, border: '1px solid var(--border-color)', borderRadius: 'var(--radius-sm)', background: 'var(--bg-input, #fff)', color: 'var(--text-primary)', textAlign: 'center' }}
+        />
+      </div>
+    </div>
+  );
+}
 
 function App() {
   const [signType, setSignType] = useState('sibi');
@@ -27,6 +121,9 @@ function App() {
     catch { return []; }
   });
   const [signerTag, setSignerTag] = useState(() => localStorage.getItem('signerTag') || '');
+  const toastIdRef = useRef(0);
+  const [quality, setQuality] = useState<Record<string, LabelQuality>>({});
+  const [target, setTarget] = useState(() => Number(localStorage.getItem('labelTarget') || 30));
   const [addingNewSigner, setAddingNewSigner] = useState(false);
   const [newSignerInput, setNewSignerInput] = useState('');
 
@@ -42,13 +139,38 @@ function App() {
     setLabels(data);
   }, [signType]);
 
+  // Hitung progress per label (dipakai banner di atas + sidebar)
+  const loadQuality = useCallback(async () => {
+    const allRecs = await fetchRecordings(signType);
+    // Kalau perekam dipilih, progress dihitung untuk perekam itu saja
+    const recs = signerTag ? allRecs.filter(r => r.signerTag === signerTag) : allRecs;
+    const qMap: Record<string, LabelQuality> = {};
+    recs.forEach(r => {
+      if (!qMap[r.label]) qMap[r.label] = { total: 0, good: 0, fair: 0, poor: 0 };
+      qMap[r.label].total++;
+      const q = r.quality || (r.handDetectionRate >= 0.7 ? 'good' : r.handDetectionRate >= 0.4 ? 'fair' : 'poor');
+      if (q === 'good') qMap[r.label].good++;
+      else if (q === 'fair') qMap[r.label].fair++;
+      else qMap[r.label].poor++;
+    });
+    setQuality(qMap);
+  }, [signType, signerTag]);
+
   useEffect(() => {
     loadStats();
     loadLabels();
-  }, [loadStats, loadLabels, refreshTrigger]);
+    loadQuality();
+  }, [loadStats, loadLabels, loadQuality, refreshTrigger]);
+
+  const changeTarget = (v: number) => {
+    const n = Math.max(1, Math.min(999, Number(v) || 1));
+    setTarget(n);
+    localStorage.setItem('labelTarget', String(n));
+  };
 
   const showToast = (msg: string, type: 'success' | 'error' = 'success') => {
-    const id = Date.now();
+    // Date.now() bisa sama untuk dua toast beruntun → key React bentrok & toast hilang
+    const id = ++toastIdRef.current;
     setToasts(prev => [...prev, { id, msg, type }]);
     setTimeout(() => {
       setToasts(prev => prev.filter(t => t.id !== id));
@@ -95,13 +217,16 @@ function App() {
   const handleAutoAdvance = useCallback(() => {
     if (!selectedLabel || labels.length === 0) return;
     const idx = labels.indexOf(selectedLabel);
-    if (idx < labels.length - 1) {
-      setSelectedLabel(labels[idx + 1]);
-      showToast(`Auto-lanjut → "${labels[idx + 1]}"`, 'success');
+    // Lompati label yang targetnya sudah tercapai — dulu selalu ke label berikutnya
+    // walau sudah penuh, jadi perekam harus pindah manual terus
+    const next = labels.slice(idx + 1).find(l => (quality[l]?.good ?? 0) < target);
+    if (next) {
+      setSelectedLabel(next);
+      showToast(`Auto-lanjut → "${next}"`, 'success');
     } else {
-      showToast('Semua label sudah selesai!', 'success');
+      showToast('Semua label berikutnya sudah mencapai target!', 'success');
     }
-  }, [selectedLabel, labels]);
+  }, [selectedLabel, labels, quality, target]);
 
   const handleExport = async () => {
     try {
@@ -222,6 +347,8 @@ function App() {
             refreshTrigger={refreshTrigger}
             onRefresh={refresh}
             signerTag={signerTag}
+            quality={quality}
+            target={target}
           />
         </aside>
 
@@ -239,6 +366,16 @@ function App() {
               </div>
             </div>
           </div>
+
+          <TargetBanner
+            signType={signType}
+            selectedLabel={selectedLabel}
+            labels={labels}
+            quality={quality}
+            target={target}
+            onTargetChange={changeTarget}
+            signerTag={signerTag}
+          />
 
           {/* Tab View */}
           <div className="view-tabs">
@@ -258,17 +395,21 @@ function App() {
             </button>
           </div>
 
-          {activeView === 'record' ? (
+          {/* Recorder sengaja TIDAK di-unmount saat pindah tab — kalau di-unmount,
+              kamera + MediaPipe (±10 detik) harus di-load ulang tiap balik ke sini */}
+          <div style={{ display: activeView === 'record' ? 'block' : 'none' }}>
             <WebCamRecorder
               signType={signType}
               selectedLabel={selectedLabel}
               labels={labels}
               signerTag={signerTag}
+              active={activeView === 'record'}
               onRecorded={refresh}
               onAutoAdvance={handleAutoAdvance}
               onToast={showToast}
             />
-          ) : (
+          </div>
+          {activeView === 'dataset' && (
             <DatasetList
               signType={signType}
               selectedLabel={selectedLabel}

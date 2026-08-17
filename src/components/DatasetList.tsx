@@ -63,6 +63,11 @@ export default function DatasetList({
   const totalPages = Math.max(1, Math.ceil(filtered.length / ITEMS_PER_PAGE));
   const paginated = filtered.slice((page - 1) * ITEMS_PER_PAGE, page * ITEMS_PER_PAGE);
 
+  // Menghapus item terakhir di halaman akhir bikin `page` melebihi totalPages → grid kosong
+  useEffect(() => {
+    if (page > totalPages) setPage(totalPages);
+  }, [page, totalPages]);
+
   const handleEdit = (rec: Recording) => {
     setEditingId(rec.id);
     setEditLabel(rec.label);

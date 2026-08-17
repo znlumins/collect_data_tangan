@@ -26,3 +26,17 @@ dist-ssr/
 
 # Project specific datasets
 dataset/
+
+# Folder sementara upload video (dibersihkan tiap server start)
+.tmp_uploads/
+
+# Kredensial - JANGAN pernah ikut ter-commit (repo ini punya remote publik)
+kaggle/
+kaggle.json
+access_token
+.env
+*.pem
+*.key
+
+# Hasil training lokal: dataset mentah & model, ukurannya besar
+HASIL_TRAINING_LOCAL/
